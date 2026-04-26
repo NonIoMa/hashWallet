@@ -1,4 +1,4 @@
-"""Create a raw unsigned Bitcoin transaction for hash-wallet.
+"""Create a raw unsigned Bitcoin/Litecoin transaction for hash-wallet.
 
 Builds a serialized unsigned transaction from a list of inputs (txid:vout)
 and outputs (address:amount_sats). Supports P2PKH, P2SH, P2WPKH, and P2WSH
@@ -6,7 +6,7 @@ output scripts. The result is a raw hex string ready to be signed with
 signtransaction.py.
 """
 
-"""Build a raw unsigned Bitcoin transaction from inputs and outputs.
+"""Build a raw unsigned Bitcoin/Litecoin transaction from inputs and outputs.
 
 Accepts inputs as txid:vout pairs and outputs as address:amount_sats pairs.
 Produces a serialized unsigned transaction hex ready to be passed to
@@ -53,16 +53,16 @@ def to_compact_size(n):
 
 
 def make_script_pubkey(address):
-    # P2PKH: legacy addresses starting with '1' (mainnet) or 'm'/'n' (testnet)
-    if address[0] in ('1', 'm', 'n'):
+    # P2PKH: '1'=BTC, 'm'/'n'=Testnet (BTC/LTC), 'L'=LTC Mainnet
+    if address[0] in ('1', 'm', 'n', 'L'):
         return '76a914' + base58.b58decode(address)[1:21].hex() + '88ac'
 
-    # P2SH: addresses starting with '3'
-    elif address[0] == '3':
+    # P2SH: '3'=BTC/LTC, 'M'=LTC Mainnet, '2'=Testnet P2SH
+    elif address[0] in ('3', 'M', '2'):
         return 'a914' + base58.b58decode(address)[1:21].hex() + '87'
 
-    # P2WPKH / P2WSH: native SegWit addresses
-    elif address.startswith(('bc1q', 'tb1q', 'bcrt1q')):
+    # P2WPKH / P2WSH: native SegWit addresses (BTC and LTC)
+    elif address.startswith(('bc1q', 'tb1q', 'bcrt1q', 'ltc1q', 'tltc1q')):
         hrp, data = bech32.bech32_decode(address)
         decoded_bytes = bech32.convertbits(data[1:], 5, 8, False)
 
@@ -114,7 +114,7 @@ def make_outputs(outputs):
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Create a raw unsigned Bitcoin transaction")
+    parser = argparse.ArgumentParser(description="Create a raw unsigned Bitcoin/Litecoin transaction")
     parser.add_argument("-i", "--inputs", required=True, help="Inputs format: txid:vout[,txid:vout,...]")
     parser.add_argument("-o", "--outputs", required=True, help="Outputs format: address:amount_sats[,...]")
     parser.add_argument("-v", "--version", type=int, default=2, help="Transaction version (default: 2)")

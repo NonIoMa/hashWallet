@@ -30,14 +30,14 @@ def hash160(data: bytes) -> bytes:
 
 
 def public_key_to_address(pubkey: bytes, currency: str, addr_type: str) -> str:
-    if currency not in ("btc", "testnet4", "ltc"):
+    if currency not in ("btc", "testnet4", "ltc", "tltc"):
         raise ValueError(f"Unsupported currency: {currency}")
 
     if addr_type == "p2pkh":
         # b'\x00' = Bitcoin Mainnet (1...)
         # b'\x6f' = Bitcoin Testnet (m/n...)
         # b'\x30' = Litecoin Mainnet (L...)
-        versions = {"btc": b'\x00', "testnet4": b'\x6f', "ltc": b'\x30'}
+        versions = {"btc": b'\x00', "testnet4": b'\x6f', "ltc": b'\x30', "tltc": b'\x6f'}
         version = versions[currency]
         
         hash160_pub = hash160(pubkey)
@@ -49,7 +49,7 @@ def public_key_to_address(pubkey: bytes, currency: str, addr_type: str) -> str:
         # bc = Bitcoin Mainnet (bc1...)
         # tb = Bitcoin Testnet (tb1...)
         # ltc = Litecoin Mainnet (ltc1...)
-        hrps = {"btc": "bc", "testnet4": "tb", "ltc": "ltc"}
+        hrps = {"btc": "bc", "testnet4": "tb", "ltc": "ltc", "tltc": "tltc"}
         hrp = hrps[currency]
         
         hash160_pub = hash160(pubkey)
@@ -171,4 +171,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-    

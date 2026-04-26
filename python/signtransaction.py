@@ -1,4 +1,4 @@
-"""Sign a raw Bitcoin transaction for hash-wallet.
+"""Sign a raw Bitcoin/Litecoin transaction for hash-wallet.
 
 Reads unsigned inputs from a raw transaction hex, matches each UTXO against
 the wallet file, decrypts the private key, and produces a signed transaction.
@@ -6,7 +6,7 @@ Supports P2PKH (legacy) and P2WPKH (native SegWit) inputs detected automatically
 from the stored scriptpubkey.
 """
 
-"""Sign a raw Bitcoin transaction using keys stored in a wallet JSON file.
+"""Sign a raw Bitcoin/Litecoin transaction using keys stored in a wallet JSON file.
 
 Supports P2PKH (legacy) and P2WPKH (native SegWit) inputs. The script type
 is detected automatically from the stored scriptpubkey. Each unsigned input
@@ -387,7 +387,7 @@ def decode_transaction(raw_hex, filePath, sighash_type, password):
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Sign a raw Bitcoin transaction")
+    parser = argparse.ArgumentParser(description="Sign a raw Bitcoin/Litecoin transaction")
     parser.add_argument("transaction", help="Raw unsigned transaction (hex)")
     parser.add_argument("name", help="Name of the wallet")
     parser.add_argument("-p", "--password", required=True, help="Password for private key decryption", type=str)
