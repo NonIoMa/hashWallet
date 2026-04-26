@@ -31,6 +31,7 @@ def main():
         wallet_data = json.load(f)
 
     addresses = wallet_data["wallet"]["addresses"]
+    total_balance = 0
 
     for addrEL in addresses:
         address = addrEL["address"]
@@ -57,6 +58,11 @@ def main():
         # Build txid -> tx lookup for fast matching
         tx_by_id = {t["txid"]: t for t in txs}
 
+        # Calculate balance for this address
+        address_balance = sum(utxo.get("value", 0) for utxo in utxos)
+        addrEL["balance"] = address_balance
+        total_balance += address_balance
+
         for utxo in utxos:
             utxo_txid = utxo["txid"]
             utxo_vout = utxo["vout"]
@@ -79,8 +85,20 @@ def main():
                 except (IndexError, KeyError):
                     print(f"  WARNING: Could not find vout {utxo_vout} in fetched tx {utxo_txid[:8]}...")
 
+    # Add wallet-level balance
+    if "wallet" not in wallet_data:
+        wallet_data["wallet"] = {}
+    wallet_data["wallet"]["balance"] = total_balance
+
     with open(file, "w") as f:
         json.dump(wallet_data, f, indent=2)
+
+    print()
+    print("--- SUMMARY ---")
+    print(f"  Total balance: {total_balance} sats")
+    for addr in addresses:
+        balance = addr.get("balance", 0)
+        print(f"  {addr['address']}: {balance} sats")
 
 
 if __name__ == "__main__":

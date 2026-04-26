@@ -405,8 +405,7 @@ def main():
     print()
     tx = decode_transaction(args.transaction, file, args.sighash, args.password)
 
-    print('
---- FINAL TX ---')
+    print('--- FINAL TX ---')
     print(tx)
 
 
