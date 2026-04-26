@@ -150,8 +150,7 @@ def main():
         + make_locktime(args.locktime)
     )
 
-    print('
---- FINAL TX ---')
+    print('--- FINAL TX ---')
     print(raw_tx)
 
 

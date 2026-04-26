@@ -119,9 +119,16 @@ def main() -> None:
     elif rel_path == parent_path:
         rel_path = ""
 
-    print(f"Deriving relative path: {rel_path or '(none)'}")
-    child_priv, _ = derive_path(parent_priv, parent_chaincode, rel_path)
-
+    if rel_path:
+        # derive_path requires a full BIP32 path starting with 'm/'
+        full_rel_path = "m/" + rel_path
+        print(f"Deriving relative path: {full_rel_path}")
+        child_priv, _ = derive_path(parent_priv, parent_chaincode, full_rel_path)
+    else:
+        # parent key IS the target — no further derivation needed
+        print("Deriving relative path: (none, using parent key directly)")
+        child_priv = parent_priv
+        
     pubkey = private_key_to_public_key(child_priv)
     address = public_key_to_address(pubkey, args.currency, args.type)
     print(f"Derived address: {address}")
