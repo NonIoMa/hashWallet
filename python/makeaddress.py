@@ -30,31 +30,41 @@ def hash160(data: bytes) -> bytes:
 
 
 def public_key_to_address(pubkey: bytes, currency: str, addr_type: str) -> str:
-    if currency in ("btc", "testnet4"):
-        if addr_type == "p2pkh":
-            version = b'\x00' if currency == "btc" else b'\x6f'
-            hash160_pub = hash160(pubkey)
-            version_hash = version + hash160_pub
-            checksum = hashlib.sha256(hashlib.sha256(version_hash).digest()).digest()[:4]
-            return base58.b58encode(version_hash + checksum).decode()
-
-        elif addr_type in ("p2wpkh", "bip-84"):
-            hash160_pub = hash160(pubkey)
-            witness_program = convertbits(hash160_pub, 8, 5)
-            hrp = "bc" if currency == "btc" else "tb"
-            return bech32_encode(hrp, [0] + witness_program)
-
-        else:
-            raise ValueError(f"Unsupported address type: {addr_type}")
-    else:
+    if currency not in ("btc", "testnet4", "ltc"):
         raise ValueError(f"Unsupported currency: {currency}")
+
+    if addr_type == "p2pkh":
+        # b'\x00' = Bitcoin Mainnet (1...)
+        # b'\x6f' = Bitcoin Testnet (m/n...)
+        # b'\x30' = Litecoin Mainnet (L...)
+        versions = {"btc": b'\x00', "testnet4": b'\x6f', "ltc": b'\x30'}
+        version = versions[currency]
+        
+        hash160_pub = hash160(pubkey)
+        version_hash = version + hash160_pub
+        checksum = hashlib.sha256(hashlib.sha256(version_hash).digest()).digest()[:4]
+        return base58.b58encode(version_hash + checksum).decode()
+
+    elif addr_type in ("p2wpkh", "bip-84"):
+        # bc = Bitcoin Mainnet (bc1...)
+        # tb = Bitcoin Testnet (tb1...)
+        # ltc = Litecoin Mainnet (ltc1...)
+        hrps = {"btc": "bc", "testnet4": "tb", "ltc": "ltc"}
+        hrp = hrps[currency]
+        
+        hash160_pub = hash160(pubkey)
+        witness_program = convertbits(hash160_pub, 8, 5)
+        return bech32_encode(hrp, [0] + witness_program)
+
+    else:
+        raise ValueError(f"Unsupported address type: {addr_type}")
 
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Derive a child address and add it to a wallet")
     parser.add_argument("name", help="Wallet name")
     parser.add_argument("path", help="BIP32 derivation path, e.g. m/84'/0'/0'/0/0")
-    parser.add_argument("currency", help="Currency (e.g. btc, testnet4)")
+    parser.add_argument("currency", help="Currency (e.g. btc, testnet4, ltc)")
     parser.add_argument("type", help="Address type (p2pkh, p2wpkh, bip-84)")
     parser.add_argument("password_parent", help="Password used to decrypt the parent key")
     parser.add_argument("password_address", help="Password used to encrypt the derived address key")
@@ -161,3 +171,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+    
