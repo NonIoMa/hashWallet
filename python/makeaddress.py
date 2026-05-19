@@ -29,29 +29,84 @@ def hash160(data: bytes) -> bytes:
     return hashlib.new('ripemd160', hashlib.sha256(data).digest()).digest()
 
 
+def cashaddr_polymod(values):
+    """CashAddr checksum polymod calculation."""
+    c = 1
+    for value in values:
+        c0 = c >> 35
+        c = ((c & 0x07ffffffff) << 5) ^ value
+        if c0 & 0x01: c ^= 0x98f2bc8e61
+        if c0 & 0x02: c ^= 0x79b76d99e2
+        if c0 & 0x04: c ^= 0xf33e5fb3c4
+        if c0 & 0x08: c ^= 0xae2eabe2a8
+        if c0 & 0x10: c ^= 0x1e4f43e470
+    return c ^ 1
+
+
+def cashaddr_encode(hrp, payload):
+    """Encode payload to CashAddr format."""
+    # Convert payload to 5-bit groups
+    data = convertbits(payload, 8, 5)
+    if data is None:
+        raise ValueError("Failed to convert bits")
+    
+    # Expand HRP
+    hrp_expanded = [ord(x) & 0x1f for x in hrp] + [0]
+    
+    # Calculate checksum
+    values = hrp_expanded + data + [0, 0, 0, 0, 0, 0, 0, 0]
+    polymod = cashaddr_polymod(values)
+    checksum = [(polymod >> (5 * (7 - i))) & 0x1f for i in range(8)]
+    
+    # Encode
+    charset = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l'
+    return hrp + ':' + ''.join([charset[d] for d in data + checksum])
+
+
 def public_key_to_address(pubkey: bytes, currency: str, addr_type: str) -> str:
-    if currency not in ("btc", "testnet4", "ltc", "tltc"):
+    if currency not in ("btc", "testnet4", "ltc", "tltc", "bch", "tbch"):
         raise ValueError(f"Unsupported currency: {currency}")
 
     if addr_type == "p2pkh":
-        # b'\x00' = Bitcoin Mainnet (1...)
-        # b'\x6f' = Bitcoin Testnet (m/n...)
-        # b'\x30' = Litecoin Mainnet (L...)
-        versions = {"btc": b'\x00', "testnet4": b'\x6f', "ltc": b'\x30', "tltc": b'\x6f'}
+        # Standard P2PKH version bytes
+        versions = {
+            "btc": b'\x00',      # Bitcoin Mainnet (1...)
+            "testnet4": b'\x6f', # Bitcoin Testnet (m/n...)
+            "ltc": b'\x30',      # Litecoin Mainnet (L...)
+            "tltc": b'\x6f',     # Litecoin Testnet
+            "bch": b'\x00',      # Bitcoin Cash legacy (1...)
+            "tbch": b'\x6f'      # Bitcoin Cash Testnet legacy
+        }
         version = versions[currency]
         
         hash160_pub = hash160(pubkey)
-        version_hash = version + hash160_pub
-        checksum = hashlib.sha256(hashlib.sha256(version_hash).digest()).digest()[:4]
-        return base58.b58encode(version_hash + checksum).decode()
+        
+        # Bitcoin Cash uses CashAddr format
+        if currency in ("bch", "tbch"):
+            hrp = "bitcoincash" if currency == "bch" else "bchtest"
+            # Version byte: 0x00 for P2PKH
+            payload = bytes([0x00]) + hash160_pub
+            return cashaddr_encode(hrp, payload)
+        else:
+            # Legacy Base58 encoding for BTC/LTC
+            version_hash = version + hash160_pub
+            checksum = hashlib.sha256(hashlib.sha256(version_hash).digest()).digest()[:4]
+            return base58.b58encode(version_hash + checksum).decode()
 
     elif addr_type in ("p2wpkh", "bip-84"):
-        # bc = Bitcoin Mainnet (bc1...)
-        # tb = Bitcoin Testnet (tb1...)
-        # ltc = Litecoin Mainnet (ltc1...)
-        hrps = {"btc": "bc", "testnet4": "tb", "ltc": "ltc", "tltc": "tltc"}
-        hrp = hrps[currency]
+        # Native SegWit addresses
+        hrps = {
+            "btc": "bc",
+            "testnet4": "tb",
+            "ltc": "ltc",
+            "tltc": "tltc"
+        }
         
+        # BCH does not support native SegWit
+        if currency in ("bch", "tbch"):
+            raise ValueError(f"Bitcoin Cash does not support SegWit addresses. Use p2pkh instead.")
+        
+        hrp = hrps[currency]
         hash160_pub = hash160(pubkey)
         witness_program = convertbits(hash160_pub, 8, 5)
         return bech32_encode(hrp, [0] + witness_program)
@@ -64,7 +119,7 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Derive a child address and add it to a wallet")
     parser.add_argument("name", help="Wallet name")
     parser.add_argument("path", help="BIP32 derivation path, e.g. m/84'/0'/0'/0/0")
-    parser.add_argument("currency", help="Currency (e.g. btc, testnet4, ltc)")
+    parser.add_argument("currency", help="Currency (e.g. btc, testnet4, ltc, bch, tbch)")
     parser.add_argument("type", help="Address type (p2pkh, p2wpkh, bip-84)")
     parser.add_argument("password_parent", help="Password used to decrypt the parent key")
     parser.add_argument("password_address", help="Password used to encrypt the derived address key")

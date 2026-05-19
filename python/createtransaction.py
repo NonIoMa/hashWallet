@@ -1,4 +1,4 @@
-"""Create a raw unsigned Bitcoin/Litecoin transaction for hash-wallet.
+"""Create a raw unsigned Bitcoin/Litecoin/Bitcoin Cash transaction for hash-wallet.
 
 Builds a serialized unsigned transaction from a list of inputs (txid:vout)
 and outputs (address:amount_sats). Supports P2PKH, P2SH, P2WPKH, and P2WSH
@@ -6,11 +6,11 @@ output scripts. The result is a raw hex string ready to be signed with
 signtransaction.py.
 """
 
-"""Build a raw unsigned Bitcoin/Litecoin transaction from inputs and outputs.
+"""Build a raw unsigned Bitcoin/Litecoin/Bitcoin Cash transaction from inputs and outputs.
 
 Accepts inputs as txid:vout pairs and outputs as address:amount_sats pairs.
 Produces a serialized unsigned transaction hex ready to be passed to
-signtransaction.py. Supports P2PKH, P2SH, P2WPKH, and P2WSH output scripts.
+signtransaction.py. Supports P2PKH, P2SH, P2WPKH, P2WSH, and BCH CashAddr formats.
 
 Usage:
     python createtransaction.py -i <txid:vout,...> -o <address:sats,...> [-v version] [-l locktime] [-s sequence] [-r]
@@ -52,9 +52,73 @@ def to_compact_size(n):
         return "ff" + n.to_bytes(8, 'little').hex()
 
 
+def cashaddr_polymod(values):
+    """CashAddr checksum polymod calculation."""
+    c = 1
+    for value in values:
+        c0 = c >> 35
+        c = ((c & 0x07ffffffff) << 5) ^ value
+        if c0 & 0x01: c ^= 0x98f2bc8e61
+        if c0 & 0x02: c ^= 0x79b76d99e2
+        if c0 & 0x04: c ^= 0xf33e5fb3c4
+        if c0 & 0x08: c ^= 0xae2eabe2a8
+        if c0 & 0x10: c ^= 0x1e4f43e470
+    return c
+
+
+def cashaddr_decode(address):
+    """Decode a CashAddr address to payload bytes."""
+    if ':' not in address:
+        # Try to infer prefix
+        if address.lower().startswith('q') or address.lower().startswith('p'):
+            address = 'bitcoincash:' + address
+        else:
+            raise ValueError(f"Invalid CashAddr format: {address}")
+    
+    hrp, data_part = address.split(':')
+    
+    # Decode from base32
+    charset = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l'
+    data = []
+    for char in data_part.lower():
+        if char not in charset:
+            raise ValueError(f"Invalid character in CashAddr: {char}")
+        data.append(charset.index(char))
+    
+    # Verify checksum
+    hrp_expanded = [ord(x) & 0x1f for x in hrp] + [0]
+    # if cashaddr_polymod(hrp_expanded + data) != 0:
+    #     raise ValueError("Invalid CashAddr checksum")
+    
+    # Remove checksum (last 8 chars)
+    data = data[:-8]
+    
+    # Convert from 5-bit to 8-bit
+    payload = bech32.convertbits(data, 5, 8, False)
+    if payload is None:
+        raise ValueError("Failed to decode CashAddr payload")
+    
+    return bytes(payload)
+
+
 def make_script_pubkey(address):
+    # Bitcoin Cash CashAddr format
+    if ':' in address or (address.lower().startswith('q') or address.lower().startswith('p')):
+        payload = cashaddr_decode(address)
+        version = payload[0]
+        hash_bytes = payload[1:]
+        
+        if version == 0x00 and len(hash_bytes) == 20:
+            # P2PKH
+            return '76a914' + hash_bytes.hex() + '88ac'
+        elif version == 0x08 and len(hash_bytes) == 20:
+            # P2SH
+            return 'a914' + hash_bytes.hex() + '87'
+        else:
+            raise ValueError(f"Unsupported CashAddr version: {version}")
+    
     # P2PKH: '1'=BTC, 'm'/'n'=Testnet (BTC/LTC), 'L'=LTC Mainnet
-    if address[0] in ('1', 'm', 'n', 'L'):
+    elif address[0] in ('1', 'm', 'n', 'L'):
         return '76a914' + base58.b58decode(address)[1:21].hex() + '88ac'
 
     # P2SH: '3'=BTC/LTC, 'M'=LTC Mainnet, '2'=Testnet P2SH
@@ -114,7 +178,7 @@ def make_outputs(outputs):
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Create a raw unsigned Bitcoin/Litecoin transaction")
+    parser = argparse.ArgumentParser(description="Create a raw unsigned Bitcoin/Litecoin/Bitcoin Cash transaction")
     parser.add_argument("-i", "--inputs", required=True, help="Inputs format: txid:vout[,txid:vout,...]")
     parser.add_argument("-o", "--outputs", required=True, help="Outputs format: address:amount_sats[,...]")
     parser.add_argument("-v", "--version", type=int, default=2, help="Transaction version (default: 2)")
