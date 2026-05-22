@@ -58,6 +58,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("type", help="Address type (p2pkh, p2wpkh, bip-84)")
     parser.add_argument("password_parent", help="Password used to decrypt the parent key")
     parser.add_argument("password_address", help="Password used to encrypt the derived address key")
+    parser.add_argument("--comment", help="Optional comment for the derived address", default="")
     return parser.parse_args()
 
 
@@ -141,7 +142,8 @@ def main() -> None:
         "address": address,
         "private-key-enc": encrypt_private_key(child_priv, args.password_address).hex(),
         "UTXO": [],
-        "transactions": []
+        "transactions": [],
+        "comment": args.comment or ""
     }
 
     if wallet_data["wallet"].get("addresses") is None:

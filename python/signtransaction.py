@@ -28,6 +28,13 @@ from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
+SIGHASH_ALL = 1
+SIGHASH_NONE = 2
+SIGHASH_SINGLE = 3
+SIGHASH_ANYONECANPAY = 0x80
+
+ONE_HASH = "01" + "00" * 31
+
 from assets.crypto_utils import decrypt_private_key
 
 
@@ -243,32 +250,72 @@ def serialize_tx(parsed_tx, include_witness=True):
 # --- Signature Generation ---
 
 def get_legacy_sighash(parsed_tx, input_idx, script_pubkey, sighash_type):
+    base_type = sighash_type & 0x1f
+    anyone = sighash_type & SIGHASH_ANYONECANPAY
+    if base_type == SIGHASH_SINGLE and input_idx >= len(parsed_tx['outputs']):
+        return ONE_HASH
+
     tx_copy = copy.deepcopy(parsed_tx)
 
     for i, inp in enumerate(tx_copy['inputs']):
         inp['script_sig'] = script_pubkey if i == input_idx else ""
+        if i != input_idx and base_type in (SIGHASH_NONE, SIGHASH_SINGLE):
+            inp['sequence'] = '00000000'
+
+    if base_type == SIGHASH_NONE:
+        tx_copy['outputs'] = []
+    elif base_type == SIGHASH_SINGLE:
+        new_outputs = []
+        for i, out in enumerate(parsed_tx['outputs']):
+            if i < input_idx:
+                new_outputs.append({'amount': '0000000000000000', 'script_pubkey': ''})
+            elif i == input_idx:
+                new_outputs.append(out)
+                break
+        tx_copy['outputs'] = new_outputs
+
+    if anyone:
+        tx_copy['inputs'] = [tx_copy['inputs'][input_idx]]
 
     raw_tx = serialize_tx(tx_copy, include_witness=False)
     raw_tx += sighash_type.to_bytes(4, 'little').hex()
-
     return double_sha256(raw_tx)
 
 
 def get_segwit_sighash(parsed_tx, input_idx, script_code, amount_sats, sighash_type):
     version = parsed_tx['version']
+    base_type = sighash_type & 0x1f
+    anyone = sighash_type & SIGHASH_ANYONECANPAY
 
-    hashPrevouts = double_sha256("".join([inp['outpoint'] for inp in parsed_tx['inputs']]))
-    hashSequence = double_sha256("".join([inp['sequence'] for inp in parsed_tx['inputs']]))
+    if base_type == SIGHASH_SINGLE and input_idx >= len(parsed_tx['outputs']):
+        return ONE_HASH
+
+    if anyone:
+        hashPrevouts = "00" * 32
+    else:
+        hashPrevouts = double_sha256("".join([inp['outpoint'] for inp in parsed_tx['inputs']]))
+
+    if anyone or base_type in (SIGHASH_NONE, SIGHASH_SINGLE):
+        hashSequence = "00" * 32
+    else:
+        hashSequence = double_sha256("".join([inp['sequence'] for inp in parsed_tx['inputs']]))
+
+    if base_type == SIGHASH_ALL:
+        hashOutputs = double_sha256("".join([
+            out['amount'] + write_varint(len(out['script_pubkey']) // 2) + out['script_pubkey']
+            for out in parsed_tx['outputs']
+        ]))
+    elif base_type == SIGHASH_NONE:
+        hashOutputs = "00" * 32
+    else:  # SIGHASH_SINGLE
+        output = parsed_tx['outputs'][input_idx]
+        hashOutputs = double_sha256(
+            output['amount'] + write_varint(len(output['script_pubkey']) // 2) + output['script_pubkey']
+        )
 
     outpoint = parsed_tx['inputs'][input_idx]['outpoint']
     amount_hex = amount_sats.to_bytes(8, 'little').hex()
     nSequence = parsed_tx['inputs'][input_idx]['sequence']
-
-    hashOutputs = double_sha256("".join([
-        out['amount'] + write_varint(len(out['script_pubkey']) // 2) + out['script_pubkey']
-        for out in parsed_tx['outputs']
-    ]))
-
     locktime = parsed_tx['locktime']
     sighash_hex = sighash_type.to_bytes(4, 'little').hex()
 
@@ -300,7 +347,7 @@ def prepare_signature(r, s, sighash_type):
     signature_body = integer_marker + r_len + r_hex + integer_marker + s_len + s_hex
     sig_len = f"{len(signature_body) // 2:02x}"
 
-    return header + sig_len + signature_body + f"{sighash_type:02x}"
+    return header + sig_len + signature_body + f"{sighash_type & 0xff:02x}"
 
 
 def sign_hash(z_hex, private_key_enc, password, sighash_type):
@@ -366,6 +413,7 @@ def decode_transaction(raw_hex, filePath, sighash_type, password):
                     # Strip length prefix byte if accidentally included in stored scriptpubkey
                     if len(prev_script) == 52 and prev_script.startswith("19"):
                         prev_script = prev_script[2:]
+                    print(f"  -> using sighash type: {sighash_type} (0x{sighash_type:02x})")
                     z_hex = get_legacy_sighash(parsed_tx, i, prev_script, sighash_type)
                     sig_der = sign_hash(z_hex, private_key_enc, password, sighash_type)
                     sig_push = write_varint(len(sig_der) // 2) + sig_der
@@ -375,6 +423,7 @@ def decode_transaction(raw_hex, filePath, sighash_type, password):
 
                 elif addr_type == "p2wpkh":
                     script_code = "1976a914" + get_hash160(public_key) + "88ac"
+                    print(f"  -> using sighash type: {sighash_type} (0x{sighash_type:02x})")
                     z_hex = get_segwit_sighash(parsed_tx, i, script_code, amount, sighash_type)
                     sig_der = sign_hash(z_hex, private_key_enc, password, sighash_type)
                     parsed_tx['witnesses'][i] = [sig_der, public_key]
@@ -391,7 +440,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("transaction", help="Raw unsigned transaction (hex)")
     parser.add_argument("name", help="Name of the wallet")
     parser.add_argument("-p", "--password", required=True, help="Password for private key decryption", type=str)
-    parser.add_argument("-s", "--sighash", help="Sighash type (default: 1 = SIGHASH_ALL)", default=1, type=int)
+    parser.add_argument("-s", "--sighash", help="Sighash type (default: 1 = SIGHASH_ALL)", default="1", type=str)
     return parser.parse_args()
 
 
@@ -401,9 +450,18 @@ def main():
 
     print("--- CONFIG ---")
     print(f"  Wallet   : {args.name}")
-    print(f"  Sighash  : {args.sighash} ({'SIGHASH_ALL' if args.sighash == 1 else 'SIGHASH_NONE' if args.sighash == 2 else 'SIGHASH_SINGLE' if args.sighash == 3 else 'UNKNOWN'})")
+    # Normalize sighash argument: allow decimal or hex (0x..) and clamp to one byte
+    try:
+        if isinstance(args.sighash, str) and args.sighash.startswith(('0x','0X')):
+            sighash_val = int(args.sighash, 16)
+        else:
+            sighash_val = int(args.sighash)
+    except Exception:
+        sighash_val = 1
+    sighash_val = sighash_val & 0xff
+    print(f"  Sighash  : {sighash_val} ({'SIGHASH_ALL' if sighash_val == 1 else 'SIGHASH_NONE' if sighash_val == 2 else 'SIGHASH_SINGLE' if sighash_val == 3 else hex(sighash_val)})")
     print()
-    tx = decode_transaction(args.transaction, file, args.sighash, args.password)
+    tx = decode_transaction(args.transaction, file, sighash_val, args.password)
 
     print('--- FINAL TX ---')
     print(tx)
