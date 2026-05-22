@@ -1,9 +1,8 @@
 """UTXO sync utility for hash-wallet.
 
-Fetches current UTXOs and recent transactions from mempool.space for every
-address stored in a wallet JSON file, and updates the file in place.
-The scriptpubkey for each UTXO is resolved by matching against the creating
-transaction, fetching it directly from the API if not found in recent history.
+Fetches current UTXOs and recent transactions from mempool.space (BTC) or 
+litecoinspace.org (LTC) for every address stored in a wallet JSON file, 
+and updates the file in place.
 """
 
 import requests
@@ -36,21 +35,30 @@ def main():
     for addrEL in addresses:
         address = addrEL["address"]
         currency = addrEL["currency"]
-        print(f"Checking {address}")
+        print(f"Checking {address} ({currency.upper()})")
 
+        # Select API Provider based on currency
         if currency == "btc":
-            prefix = ''
+            base_url = "https://mempool.space/api"
         elif currency == "testnet4":
-            prefix = 'testnet4/'
+            base_url = "https://mempool.space/testnet4/api"
+        elif currency == "ltc":
+            base_url = "https://litecoinspace.org/api"
+        elif currency == "tltc":
+            base_url = "https://litecoinspace.org/testnet/api"
         else:
             print(f"  WARNING: Unknown currency '{currency}', skipping.")
             continue
 
-        utxo_url = f"https://mempool.space/{prefix}api/address/{address}/utxo"
-        tx_url = f"https://mempool.space/{prefix}api/address/{address}/txs"
+        utxo_url = f"{base_url}/address/{address}/utxo"
+        tx_url = f"{base_url}/address/{address}/txs"
 
-        utxos = requests.get(utxo_url).json()
-        txs = requests.get(tx_url).json()
+        try:
+            utxos = requests.get(utxo_url).json()
+            txs = requests.get(tx_url).json()
+        except Exception as e:
+            print(f"  ERROR: Failed to fetch data for {address}: {e}")
+            continue
 
         addrEL["UTXO"] = utxos
         addrEL["transactions"] = [t["txid"] for t in txs]
@@ -77,15 +85,15 @@ def main():
             else:
                 # Creating tx not in recent history, fetch directly
                 print(f"  Fetching tx {utxo_txid[:8]}... directly")
-                tx_detail_url = f"https://mempool.space/{prefix}api/tx/{utxo_txid}"
-                tx_detail = requests.get(tx_detail_url).json()
+                tx_detail_url = f"{base_url}/tx/{utxo_txid}"
                 try:
+                    tx_detail = requests.get(tx_detail_url).json()
                     utxo["scriptpubkey"] = tx_detail["vout"][utxo_vout]["scriptpubkey"]
                     print(f"  UTXO {utxo_txid[:8]}...:{utxo_vout} -> {utxo['scriptpubkey']}")
-                except (IndexError, KeyError):
+                except (IndexError, KeyError, Exception):
                     print(f"  WARNING: Could not find vout {utxo_vout} in fetched tx {utxo_txid[:8]}...")
 
-    # Add wallet-level balance
+    # Update wallet-level balance
     if "wallet" not in wallet_data:
         wallet_data["wallet"] = {}
     wallet_data["wallet"]["balance"] = total_balance
@@ -95,10 +103,10 @@ def main():
 
     print()
     print("--- SUMMARY ---")
-    print(f"  Total balance: {total_balance} sats")
+    print(f"  Total balance: {total_balance} units")
     for addr in addresses:
         balance = addr.get("balance", 0)
-        print(f"  {addr['address']}: {balance} sats")
+        print(f"  [{addr['currency'].upper()}] {addr['address']}: {balance}")
 
 
 if __name__ == "__main__":
