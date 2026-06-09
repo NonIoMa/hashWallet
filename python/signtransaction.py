@@ -247,15 +247,6 @@ def get_segwit_sighash(parsed_tx, input_idx, script_code, amount_sats, sighash_t
     outpoint = parsed_tx['inputs'][input_idx]['outpoint']
     amount_hex = amount_sats.to_bytes(8, 'little').hex()
     nSequence = parsed_tx['inputs'][input_idx]['sequence']
-    hashPrevouts = double_sha256("".join([inp['outpoint'] for inp in parsed_tx['inputs']]))
-    hashSequence = double_sha256("".join([inp['sequence'] for inp in parsed_tx['inputs']]))
-    outpoint = parsed_tx['inputs'][input_idx]['outpoint']
-    amount_hex = amount_sats.to_bytes(8, 'little').hex()
-    nSequence = parsed_tx['inputs'][input_idx]['sequence']
-    hashOutputs = double_sha256("".join([
-        out['amount'] + write_varint(len(out['script_pubkey']) // 2) + out['script_pubkey']
-        for out in parsed_tx['outputs']
-    ]))
     locktime = parsed_tx['locktime']
     # BIP143 / BCH requires 4-byte little endian sighash
     sighash_hex = (sighash_type).to_bytes(4, 'little').hex()
@@ -282,8 +273,6 @@ def prepare_signature(r, s, sighash_type):
     sig_len = f"{len(signature_body) // 2:02x}"
 
     return header + sig_len + signature_body + f"{sighash_type & 0xff:02x}"
-
-    return header + sig_len + signature_body + f"{(sighash_type & 0xff):02x}"
 
 def sign_hash(z_hex, private_key_enc, password, sighash_type):
     n = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141
@@ -379,8 +368,6 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("name", help="Name of the wallet")
     parser.add_argument("-p", "--password", required=True, help="Password for private key decryption", type=str)
     parser.add_argument("-s", "--sighash", help="Sighash type (default: 1 = SIGHASH_ALL)", default="1", type=str)
-    parser.add_argument("-p", "--password", required=True, help="Password", type=str)
-    parser.add_argument("-s", "--sighash", help="Sighash (default: 1)", default=1, type=int)
     return parser.parse_args()
 
 def main():
@@ -400,10 +387,6 @@ def main():
     print(f"  Sighash  : {sighash_val} ({'SIGHASH_ALL' if sighash_val == 1 else 'SIGHASH_NONE' if sighash_val == 2 else 'SIGHASH_SINGLE' if sighash_val == 3 else hex(sighash_val)})")
     print()
     tx = decode_transaction(args.transaction, file, sighash_val, args.password)
-    print('--- FINAL TX ---')
-    print(f"  Wallet: {args.name} | Sighash: {args.sighash}")
-    print()
-    tx = decode_transaction(args.transaction, file, args.sighash, args.password)
     print('--- FINAL SIGNED TX ---')
     print(tx)
 

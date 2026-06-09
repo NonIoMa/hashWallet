@@ -63,9 +63,37 @@ def cashaddr_encode(hrp, payload):
     return hrp + ':' + ''.join([charset[d] for d in data + checksum])
 
 
+def keccak256(data: bytes) -> bytes:
+    from Crypto.Hash import keccak as _keccak
+    k = _keccak.new(digest_bits=256)
+    k.update(data)
+    return k.digest()
+
+
+def eth_checksum_address(addr_bytes: bytes) -> str:
+    """EIP-55 checksum encoding."""
+    hex_addr = addr_bytes.hex()
+    h = keccak256(hex_addr.encode()).hex()
+    return "0x" + "".join(
+        c.upper() if int(h[i], 16) >= 8 else c
+        for i, c in enumerate(hex_addr)
+    )
+
+
 def public_key_to_address(pubkey: bytes, currency: str, addr_type: str) -> str:
-    if currency not in ("btc", "testnet4", "ltc", "tltc", "bch", "tbch"):
+    if currency not in ("btc", "testnet4", "ltc", "tltc", "bch", "tbch", "eth", "teth"):
         raise ValueError(f"Unsupported currency: {currency}")
+
+    if currency in ("eth", "teth"):
+        # Decompress if needed, then use uncompressed X||Y for keccak
+        from ecdsa import SECP256k1, VerifyingKey
+        if len(pubkey) == 33:
+            vk = VerifyingKey.from_string(pubkey, curve=SECP256k1)
+            uncompressed = vk.to_string()  # 64 bytes X||Y
+        else:
+            uncompressed = pubkey[1:] if pubkey[0] == 0x04 else pubkey
+        addr_bytes = keccak256(uncompressed)[12:]
+        return eth_checksum_address(addr_bytes)
 
     if addr_type == "p2pkh":
         # Standard P2PKH version bytes
@@ -119,8 +147,8 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Derive a child address and add it to a wallet")
     parser.add_argument("name", help="Wallet name")
     parser.add_argument("path", help="BIP32 derivation path, e.g. m/84'/0'/0'/0/0")
-    parser.add_argument("currency", help="Currency (e.g. btc, testnet4, ltc, bch, tbch)")
-    parser.add_argument("type", help="Address type (p2pkh, p2wpkh, bip-84)")
+    parser.add_argument("currency", help="Currency (btc, testnet4, ltc, bch, tbch, eth, teth)")
+    parser.add_argument("type", help="Address type (p2pkh, p2wpkh, bip-84; ignored for eth/teth)")
     parser.add_argument("password_parent", help="Password used to decrypt the parent key")
     parser.add_argument("password_address", help="Password used to encrypt the derived address key")
     parser.add_argument("--comment", help="Optional comment for the derived address", default="")
@@ -206,10 +234,16 @@ def main() -> None:
         "type": args.type,
         "address": address,
         "private-key-enc": encrypt_private_key(child_priv, args.password_address).hex(),
-        "UTXO": [],
-        "transactions": [],
         "comment": args.comment or ""
     }
+
+    if args.currency in ("eth", "teth"):
+        entry["balance"] = 0
+        entry["nonce"] = 0
+        entry["transactions"] = []
+    else:
+        entry["UTXO"] = []
+        entry["transactions"] = []
 
     if wallet_data["wallet"].get("addresses") is None:
         wallet_data["wallet"]["addresses"] = []

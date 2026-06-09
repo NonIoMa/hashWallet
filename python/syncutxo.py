@@ -3,12 +3,64 @@
 Fetches current UTXOs and recent transactions from mempool.space (BTC) or 
 litecoinspace.org (LTC) for every address stored in a wallet JSON file, 
 and updates the file in place.
+
+For Ethereum (eth/teth), fetches balance, nonce and transaction list from
+Etherscan. Set ETHERSCAN_API_KEY env var for higher rate limits.
 """
 
 import requests
 import json
 import os
 import argparse
+
+
+ETHERSCAN_API_KEY = os.environ.get("ETHERSCAN_API_KEY", "")
+
+
+def _sync_eth(addrEL: dict, testnet: bool) -> int:
+    """Sync balance, nonce and tx list for an ETH address. Returns balance in wei."""
+    address = addrEL["address"]
+    if testnet:
+        base_url = "https://api-sepolia.etherscan.io/api"
+    else:
+        base_url = "https://api.etherscan.io/api"
+
+    key_param = f"&apikey={ETHERSCAN_API_KEY}" if ETHERSCAN_API_KEY else ""
+
+    # Balance (in wei)
+    bal_url = f"{base_url}?module=account&action=balance&address={address}&tag=latest{key_param}"
+    resp = requests.get(bal_url).json()
+    if resp.get("status") != "1":
+        raise ValueError(f"Etherscan balance error: {resp.get('message')}")
+    balance_wei = int(resp["result"])
+
+    # Nonce (transaction count)
+    nonce_url = f"{base_url}?module=proxy&action=eth_getTransactionCount&address={address}&tag=latest{key_param}"
+    resp = requests.get(nonce_url).json()
+    nonce = int(resp["result"], 16)
+
+    # Recent transactions (last 25)
+    tx_url = (
+        f"{base_url}?module=account&action=txlist&address={address}"
+        f"&startblock=0&endblock=99999999&page=1&offset=25&sort=desc{key_param}"
+    )
+    resp = requests.get(tx_url).json()
+    txs = resp.get("result", []) if resp.get("status") == "1" else []
+    tx_list = [
+        {"hash": t["hash"], "from": t["from"], "to": t["to"],
+         "value": t["value"], "blockNumber": t["blockNumber"]}
+        for t in txs
+    ]
+
+    addrEL["balance"] = balance_wei
+    addrEL["nonce"] = nonce
+    addrEL["transactions"] = tx_list
+
+    balance_eth = balance_wei / 1e18
+    print(f"  Balance : {balance_eth:.6f} {'tETH' if testnet else 'ETH'}")
+    print(f"  Nonce   : {nonce}")
+    print(f"  Txs     : {len(tx_list)} recent")
+    return balance_wei
 
 
 def _parse_args() -> argparse.Namespace:
@@ -46,6 +98,13 @@ def main():
             base_url = "https://litecoinspace.org/api"
         elif currency == "tltc":
             base_url = "https://litecoinspace.org/testnet/api"
+        elif currency in ("eth", "teth"):
+            try:
+                bal = _sync_eth(addrEL, testnet=(currency == "teth"))
+                total_balance += bal
+            except Exception as e:
+                print(f"  ERROR: {e}")
+            continue
         else:
             print(f"  WARNING: Unknown currency '{currency}', skipping.")
             continue
@@ -103,10 +162,13 @@ def main():
 
     print()
     print("--- SUMMARY ---")
-    print(f"  Total balance: {total_balance} units")
     for addr in addresses:
         balance = addr.get("balance", 0)
-        print(f"  [{addr['currency'].upper()}] {addr['address']}: {balance}")
+        cur = addr["currency"]
+        if cur in ("eth", "teth"):
+            print(f"  [{cur.upper()}] {addr['address']}: {balance / 1e18:.6f} {cur.upper()}")
+        else:
+            print(f"  [{cur.upper()}] {addr['address']}: {balance} sats")
 
 
 if __name__ == "__main__":
